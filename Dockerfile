@@ -1,61 +1,60 @@
-FROM jrei/systemd-ubuntu:latest AS base
+FROM ubuntu:20.04
 
-# create log file
-RUN touch /var/log/stdout-install.log && \
-touch /var/log/stderr-install.log
-RUN ln -sf /dev/stdout /var/log/stdout-install.log && \
-ln -sf /dev/stdout /var/log/stderr-install.log
+ARG VERSION=2.9.2
 
-# Install required packages
-RUN apt update && \
-apt install -y --no-install-recommends \  
-lsb-release ca-certificates apt-transport-https software-properties-common \
-&& rm -rf /var/lib/apt/lists/*
-
-RUN add-apt-repository ppa:ondrej/php && \
-add-apt-repository ppa:ondrej/apache2 \
-&& apt upgrade -y
-
-RUN apt update && \
-apt install -yq --no-install-recommends vim git wget curl \
-apache2 php8.0 libapache2-mod-php8.0 php8.0-dev php8.0-zip php8.0-gd \
-&& rm -rf /var/lib/apt/lists/*
-
-RUN apt update -y --fix-missing && apt install -y --no-install-recommends \
-libreoffice-common libreoffice-java-common default-jre \
-ffmpeg clamav unoconv rar unrar p7zip-full gnuplot \
-imagemagick tesseract-ocr meshlab dia pandoc \
-poppler-utils nodejs libnode-dev node-gyp npm \
-&& rm -rf /var/lib/apt/lists/*
-
-# fix permissions
-RUN chown -R www-data:www-data /var/www && \
-chmod -R 0755 /var/www/html && \
-chgrp -R www-data /var/www/html
-
-# fix confgs
-RUN sed -i "s/max_execution_time = 30/max_execution_time = 90/g" /etc/php/8.0/apache2/php.ini \
-&& sed -i "s/max_input_time = 30/max_execution_time = 90/g" /etc/php/8.0/apache2/php.ini \
-&& sed -i "s/max_input_time = 30/max_execution_time = 90/g" /etc/php/8.0/apache2/php.ini \
-&& sed -i "s/memory_limit = 128M/memory_limit = 512M/g" /etc/php/8.0/apache2/php.ini \
-&& sed -i "s/display_errors = Off/display_errors = On/g" /etc/php/8.0/apache2/php.ini \
-&& sed -i "s/post_max_size = 100M/post_max_size = 3000M/g" /etc/php/8.0/apache2/php.ini \
-&& sed -i "s/upload_max_filesize = 100M/upload_max_filesize = 3000M/g" /etc/php/8.0/apache2/php.ini \
-&& sed -i "s/max_file_uploads = 10/max_file_uploads = 100/g" /etc/php/8.0/apache2/php.ini \
-&& sed -i "s/zlib.output_compression = Off/zlib.output_compression = On/g" /etc/php/8.0/apache2/php.ini
-
-# get source code
-RUN git clone https://github.com/zelon88/HRConvert2.git /var/www/html/HRProprietary/HRConvert2 \
-&& if -f ! [ /etc/rc.local ];then curl https://raw.githubusercontent.com/zelon88/HRConvert2/master/rc.local -o /etc/rc.local; fi
-
-WORKDIR /usr/hrc2ftw
-# Copy files to container
-COPY *.sh .
-COPY jobs/*.* ./jobs/
-# Fix execute permissions on files copied over from host
-RUN find . -type f -iname "*.sh" -exec chmod +x '{}' \;  
-
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 EXPOSE 80
-EXPOSE 443
-# Run on container startup
-CMD ["./start.sh"]
+
+RUN apt-get update -y && \
+    apt-get install -y software-properties-common --no-install-recommends && \
+    add-apt-repository multiverse && \
+    apt-get update && \
+    apt-get upgrade -yy && \
+    apt-get install -y apache2 default-jre php php-mysql \ 
+                       php-all-dev php-zip php-gd php-curl clamav libreoffice-common \ 
+                       unoconv p7zip-full imagemagick ffmpeg tesseract-ocr \ 
+                       meshlab dia pandoc poppler-utils zip unzip wget rar unrar --no-install-recommends && \
+    apt-get clean && \ 
+    rm -rf /var/lib/apt/lists/*
+
+ENV APACHE_RUN_USER  www-data
+ENV APACHE_RUN_GROUP www-data
+ENV APACHE_LOG_DIR   /var/log/apache2
+ENV APACHE_PID_FILE  /var/run/apache2/apache2.pid
+ENV APACHE_RUN_DIR   /var/run/apache2
+ENV APACHE_LOCK_DIR  /var/lock/apache2
+ENV APACHE_LOG_DIR   /var/log/apache2
+
+RUN mkdir -p $APACHE_RUN_DIR && \
+    mkdir -p $APACHE_LOCK_DIR && \
+    mkdir -p $APACHE_LOG_DIR
+
+
+COPY uploads.ini /etc/php/7.4/apache2/conf.d/uploads.ini
+CMD ["/usr/sbin/apache2", "-D", "FOREGROUND"]
+
+RUN mkdir /var/www/html/HRProprietary && \
+    mkdir /var/www/html/HRProprietary/HRConvert2 && \
+    mkdir /home/converter && \
+    chmod -R 0755 /home/converter && \
+    chown -R www-data /home/converter && \
+    chgrp -R www-data /home/converter
+
+RUN wget https://github.com/zelon88/HRConvert2/archive/v${VERSION}.zip -O /tmp/HRConvert2.zip && \
+    unzip /tmp/HRConvert2.zip -d /tmp/ && \
+    mv /tmp/HRConvert2-${VERSION}/* /var/www/html/HRProprietary/HRConvert2 && \
+    rm -rf /var/www/html/index.html
+
+COPY index.html /var/www/html/index.html
+
+RUN chmod -R 0755 /var/www/html && \
+    chown -R www-data /var/www/html && \
+    chgrp -R www-data /var/www/html && \
+    rm -rf /var/www/html/HRProprietary/HRConvert2/config.php
+
+COPY config.php /var/www/html/HRProprietary/HRConvert2/config.php
+
+RUN wget https://raw.githubusercontent.com/zelon88/HRConvert2/master/rc.local -O /etc/rc.local && \
+    chmod +x /etc/rc.local
+
+RUN /usr/bin/soffice --headless --accept="socket,host=127.0.0.1,port=$soffice_port;urp;" --nofirststartwizard &
